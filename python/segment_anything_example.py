@@ -1,6 +1,6 @@
 #-- coding:utf8 --
 import argparse
-
+import time
 import MNN
 import MNN.numpy as np
 import MNN.cv as cv2
@@ -34,7 +34,10 @@ def inference(emed, sam, img, precision, backend, thread):
     input_var = np.expand_dims(input_var, 0)
     # 2. embedding forward
     input_var = MNN.expr.convert(input_var, MNN.expr.NC4HW4)
+    t1 = time.time()
     output_var = embed.forward(input_var)
+    t2 = time.time()
+    print('# 1. embedding times: {} ms'.format((t2 - t1) * 1000))
     image_embedding = MNN.expr.convert(output_var, MNN.expr.NCHW)
     # 3. segment forward
     points = [[500, 375]]
@@ -46,8 +49,12 @@ def inference(emed, sam, img, precision, backend, thread):
     orig_im_size = np.array([float(origin_h), float(origin_w)], dtype=np.float32)
     mask_input = np.zeros((1, 1, 256, 256), dtype=np.float32)
     has_mask_input = np.zeros(1, dtype=np.float32)
+    t1 = time.time()
     output_vars = sam.onForward([point_coords, point_labels, image_embedding, has_mask_input, mask_input, orig_im_size])
+    t2 = time.time()
+    print('# 1. segment times: {} ms'.format((t2 - t1) * 1000))
     masks = MNN.expr.convert(output_vars[2], MNN.expr.NCHW)
+    masks = masks.squeeze([0])[0]
     # 4. postprocess: draw masks and point
     masks = (masks > mask_threshold).reshape([origin_h, origin_w, 1])
     color = np.array([30, 144, 255]).reshape([1, 1, -1])
