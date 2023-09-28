@@ -1,3 +1,5 @@
+![mnn-segment-anything](resource/logo.png)
+
 # mnn-segment-anything
 
 ## 说明
