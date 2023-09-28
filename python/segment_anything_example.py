@@ -7,6 +7,7 @@ import MNN.cv as cv2
 
 def inference(emed, sam, img, precision, backend, thread):
     mask_threshold = 0.0
+    # 0. load model
     config = {}
     config['precision'] = precision
     config['backend'] = backend
@@ -16,6 +17,7 @@ def inference(emed, sam, img, precision, backend, thread):
     sam = MNN.nn.load_module_from_file(sam,
          ['point_coords', 'point_labels', 'image_embeddings', 'has_mask_input', 'mask_input', 'orig_im_size'],
          ['iou_predictions', 'low_res_masks', 'masks'], runtime_manager=rt)
+    # 1. preprocess
     image = cv2.imread(img)
     origin_h, origin_w, _ = image.shape
     length = 1024
@@ -30,9 +32,11 @@ def inference(emed, sam, img, precision, backend, thread):
     input_var = cv2.resize(image, (new_w, new_h), 0., 0., cv2.INTER_LINEAR, -1, [123.675, 116.28, 103.53], [1/58.395, 1/57.12, 1/57.375])
     input_var = np.pad(input_var, [[0, length - new_h], [0, length - new_w], [0, 0]], 'constant')
     input_var = np.expand_dims(input_var, 0)
+    # 2. embedding forward
     input_var = MNN.expr.convert(input_var, MNN.expr.NC4HW4)
     output_var = embed.forward(input_var)
     image_embedding = MNN.expr.convert(output_var, MNN.expr.NCHW)
+    # 3. segment forward
     points = [[500, 375]]
     sclaes = [scale_w, sclae_h]
     input_point = np.array(points) * sclaes
@@ -42,14 +46,10 @@ def inference(emed, sam, img, precision, backend, thread):
     orig_im_size = np.array([float(origin_h), float(origin_w)], dtype=np.float32)
     mask_input = np.zeros((1, 1, 256, 256), dtype=np.float32)
     has_mask_input = np.zeros(1, dtype=np.float32)
-
-    print('point_coords: ', point_coords, point_coords.shape)
-    print('point_labels: ', point_labels, point_labels.shape)
-    print('orig_im_size: ', orig_im_size, orig_im_size.shape)
     output_vars = sam.onForward([point_coords, point_labels, image_embedding, has_mask_input, mask_input, orig_im_size])
     masks = MNN.expr.convert(output_vars[2], MNN.expr.NCHW)
+    # 4. postprocess: draw masks and point
     masks = (masks > mask_threshold).reshape([origin_h, origin_w, 1])
-    # draw masks and point
     color = np.array([30, 144, 255]).reshape([1, 1, -1])
     image = (image + masks * color).astype(np.uint8)
     for point in points:
