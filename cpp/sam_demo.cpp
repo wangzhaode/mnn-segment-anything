@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <chrono>
 #include <MNN/ImageProcess.hpp>
 #include <MNN/expr/Module.hpp>
 #include <MNN/expr/Executor.hpp>
@@ -68,7 +69,12 @@ int main(int argc, const char* argv[]) {
     input_var = _Unsqueeze(input_var, {0});
     // 2. image embedding
     input_var = _Convert(input_var, NC4HW4);
+    auto st = std::chrono::system_clock::now();
     auto outputs = embed->onForward({input_var});
+    auto et = std::chrono::system_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(et - st);
+    printf("# 1. embedding times: %f ms\n", duration.count() * 1e-3);
+
     auto image_embedding = _Convert(outputs[0], NCHW);
 
     // 3. segment
@@ -90,9 +96,15 @@ int main(int argc, const char* argv[]) {
     auto has_mask_input = build_input({0}, {1});
     std::vector<float> zeros(256*256, 0.f);
     auto mask_input = build_input(zeros, {1, 1, 256, 256});
+    st = std::chrono::system_clock::now();
     auto output_vars = sam->onForward({point_coords, point_labels, image_embedding, has_mask_input, mask_input, orig_im_size});
+    et = std::chrono::system_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::microseconds>(et - st);
+    printf("# 2. segment times: %f ms\n", duration.count() * 1e-3);
     auto masks = _Convert(output_vars[2], NCHW);
     // 4. postprocess: draw mask and point
+    // MobileSam has multi channel masks, get first
+    masks = _Gather(_Squeeze(masks, {0}), _Scalar<int>(0));
     masks = _Greater(masks, _Scalar(mask_threshold));
     masks = _Reshape(masks, {origin_h, origin_w, 1});
     std::vector<int> color_vec {30, 144, 255};
