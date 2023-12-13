@@ -14,20 +14,24 @@ using namespace MNN::CV;
 
 int main(int argc, const char* argv[]) {
     if (argc < 4) {
-        MNN_PRINT("Usage: ./sam_demo.out embed.mnn sam.mnn input.jpg [forwardType] [precision] [thread]\n");
+        MNN_PRINT("Usage: ./sam_demo.out embed.mnn sam.mnn input.jpg [is_edge] [forwardType] [precision] [thread]\n");
         return 0;
     }
+    bool is_edge = false;
     int thread = 4;
     int precision = 0;
     int forwardType = MNN_FORWARD_CPU;
     if (argc >= 5) {
-        forwardType = atoi(argv[4]);
+        is_edge = atoi(argv[4]);
     }
     if (argc >= 6) {
-        precision = atoi(argv[5]);
+        forwardType = atoi(argv[5]);
     }
     if (argc >= 7) {
-        thread = atoi(argv[6]);
+        precision = atoi(argv[6]);
+    }
+    if (argc >= 8) {
+        thread = atoi(argv[7]);
     }
     float mask_threshold = 0;
     MNN::ScheduleConfig sConfig;
@@ -43,9 +47,13 @@ int main(int argc, const char* argv[]) {
     }
     // rtmgr->setCache(".cachefile");
     std::shared_ptr<Module> embed(Module::load(std::vector<std::string>{}, std::vector<std::string>{}, argv[1], rtmgr));
-    std::shared_ptr<Module> sam(Module::load(
-        {"point_coords", "point_labels", "image_embeddings", "has_mask_input", "mask_input", "orig_im_size"},
-        {"iou_predictions", "low_res_masks", "masks"}, argv[2], rtmgr));
+    std::vector<std::string> sam_inputs = {"point_coords", "point_labels", "image_embeddings", "has_mask_input", "mask_input", "orig_im_size"};
+    std::vector<std::string> sam_outputs = {"iou_predictions", "low_res_masks", "masks"};
+    if (is_edge) {
+        sam_inputs = {"point_coords", "point_labels", "image_embeddings"};
+        sam_outputs = {"masks", "scores"};
+    }
+    std::shared_ptr<Module> sam(Module::load(sam_inputs, sam_outputs, argv[2], rtmgr));
     auto image = imread(argv[3]);
     // 1. preprocess
     auto dims = image->getInfo()->dim;
@@ -92,18 +100,37 @@ int main(int argc, const char* argv[]) {
     scale_points.push_back(0);
     auto point_coords = build_input(scale_points, {1, 2, 2});
     auto point_labels = build_input({1, -1}, {1, 2});
-    auto orig_im_size = build_input({static_cast<float>(origin_h), static_cast<float>(origin_w)}, {2});
-    auto has_mask_input = build_input({0}, {1});
-    std::vector<float> zeros(256*256, 0.f);
-    auto mask_input = build_input(zeros, {1, 1, 256, 256});
+    std::vector<VARP> input_vars; 
+    if (is_edge) {
+        input_vars = {point_coords, point_labels, image_embedding};
+    } else {
+        auto orig_im_size = build_input({static_cast<float>(origin_h), static_cast<float>(origin_w)}, {2});
+        auto has_mask_input = build_input({0}, {1});
+        std::vector<float> zeros(256*256, 0.f);
+        auto mask_input = build_input(zeros, {1, 1, 256, 256});
+        input_vars = {point_coords, point_labels, image_embedding, has_mask_input, mask_input, orig_im_size};
+    }
     st = std::chrono::system_clock::now();
-    auto output_vars = sam->onForward({point_coords, point_labels, image_embedding, has_mask_input, mask_input, orig_im_size});
+    auto output_vars = sam->onForward(input_vars);
     et = std::chrono::system_clock::now();
     duration = std::chrono::duration_cast<std::chrono::microseconds>(et - st);
     printf("# 2. segment times: %f ms\n", duration.count() * 1e-3);
-    auto masks = _Convert(output_vars[2], NCHW);
     // 4. postprocess: draw mask and point
     // MobileSam has multi channel masks, get first
+    VARP masks;
+    if (is_edge) {
+        masks = output_vars[0];
+        auto dims = masks->getInfo()->dim;
+        int h = dims[2], w = dims[3];
+        masks = _Convert(masks, NC4HW4);
+        masks = _Resize(masks, length/w, length/h);
+        int sliceStartData[] = {0, 0, 0, 0}, sliceEndData[] = {-1, -1, new_h, new_w};
+        masks = _Slice(masks, _Const(sliceStartData, {4}, NCHW), _Const(sliceEndData, {4}, NCHW));
+        masks = _Resize(masks, (float)origin_w/new_w, (float)origin_h/new_h);
+    } else {
+        masks = output_vars[2];
+    }
+    masks = _Convert(masks, NCHW);
     masks = _Gather(_Squeeze(masks, {0}), _Scalar<int>(0));
     masks = _Greater(masks, _Scalar(mask_threshold));
     masks = _Reshape(masks, {origin_h, origin_w, 1});

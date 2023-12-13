@@ -39,6 +39,8 @@ mkdir build && cd build
 cmake ..
 make -j4
 ./sam_demo embed.mnn segment.mnn ../../resource/truck.jpg
+# edge model need add `1`
+./sam_demo edge_embed.mnn edge_segment.mnn ../../resource/truck.jpg 1
 ```
 #### Windows
 ```bash
@@ -48,4 +50,6 @@ mkdir build && cd build
 cmake -G "Ninja" ..
 ninja
 ./sam_demo embed.mnn segment.mnn ../../resource/truck.jpg
+# edge model need add `1`
+./sam_demo edge_embed.mnn edge_segment.mnn ../../resource/truck.jpg 1
 ```
